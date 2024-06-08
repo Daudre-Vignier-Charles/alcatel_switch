@@ -3,11 +3,13 @@
 import yaml
 import secrets
 
+import config
+
 from lib.lang import AlcatelSwLang
-from lib.misc import type_is_valid, parent_cat, AConfig
+from lib.misc import type_is_valid, parent_cat, AConfig, Logger
 from lib.exceptions import SwitchConfigLogicError, SwitchConfigTypeError
 
-lang = AlcatelSwLang("FR")
+lang = AlcatelSwLang(config.language)
 
 class Empty():
     def __init__(self, section=None):
@@ -107,6 +109,15 @@ class Route():
         if type_is_valid(yaml[lang.metric], int, lang.metric, parent):
             self.metric = yaml[lang.metric]
 
+    def to_code(self):
+        aconfig = AConfig()
+        aconfig += "ip static-route {}/{} gateway {} metric {}".format(
+            self.ip,
+            self.cidr,
+            self.gateway,
+            self.metric)
+        return aconfig
+
 class LinkAgg():
     def __init__(self, yaml, parent) -> None:
         if type_is_valid(yaml[lang.name], str, lang.name, parent):
@@ -123,6 +134,23 @@ class LinkAgg():
             for port in yaml[lang.member_ports]:
                 type_is_valid(port, str, lang.port, parent)
             self.port_members = yaml[lang.member_ports]
+        
+    def to_code(self):
+        aconfig = AConfig()
+        enable = ""
+        if self.enable:
+            enable = " admin-state enable"
+            aconfig += "linkagg lacp agg {} size {} name \"{}\" actor admin-key {}{}".format(
+            self.id,
+            self.ports_number,
+            self.name,
+            self.key,
+            enable)
+            for member in self.port_members:
+                aconfig += "linkagg lacp port {} actor admin-key {}".format(
+                    member,
+                    self.key)
+        return aconfig
 
 class VLANs():
     def __init__(self, yaml, parent) -> None:
@@ -132,6 +160,16 @@ class VLANs():
             self.port_vlan_association = [PortVLANAssociation(combo, parent_cat(parent, lang.port_vlan_association)) for combo in yaml[lang.port_vlan_association]]
         if type_is_valid(yaml[lang.linkagg_vlan_association], list, lang.linkagg_vlan_association, parent):
             self.linkagg_vlan_association = [LinkAggVLANAssociation(combo, parent_cat(parent, lang.linkagg_vlan_association)) for combo in yaml[lang.linkagg_vlan_association]]
+
+    def to_code(self):
+        aconfig = AConfig("! VLAN \n")
+        for vlan in self.vlan:
+            aconfig += "vlan {} {}".format(
+                vlan.id,
+                vlan.name)
+            if vlan.enable:
+                aconfig += "vlan {} admin-state enable".format(vlan.id)
+        return aconfig
 
 class VLAN():
     def __init__(self, yaml, parent) -> None:
@@ -246,30 +284,51 @@ class Misc():
 
 class Switch():
     def __init__(self, yaml_file) -> None:
+        self.log = Logger(print=True)
         self.yaml_file = yaml_file
-        with open(self.yaml_file) as file:
-            self.yconf = yaml.load(file, Loader=yaml.Loader)
+        try:
+            self.log.log_sf("Opening and loading YAML file")
+            with open(self.yaml_file) as file:
+                self.yconf = yaml.load(file, Loader=yaml.Loader)
+            self.log.success()
+        except Exception:
+            self.log.failure()
+
+        self.origin = self.yconf
         self.empty = Empty()
         self._init_all()
 
     def _init_all(self):
-        self._init_sys_info()
-        self._init_users()
-        self._init_vlan()
-        self._init_administrative_ip_address()
-        self._init_routes()
-        self._init_link_agg()
-        self._init_dns()
-        self._init_ntp()
-        self._init_poe()
-        self._init_aaa()
-        self._init_loop_detection()
-        self._init_stp()
-        self._init_misc()
+        self.log.log_sf("Beginnin parsing of {}".format(self.yaml_file))
+        try:
+            self._init_sys_info()
+            self._init_admin_password()
+            self._init_users()
+            self._init_vlan()
+            self._init_administrative_ip_address()
+            self._init_routes()
+            self._init_linkagg()
+            self._init_dns()
+            self._init_ntp()
+            self._init_poe()
+            self._init_aaa()
+            self._init_loop_detection()
+            self._init_stp()
+            self._init_misc()
+            self.log.success()
+        except Exception as e:
+            self.log.failure()
+            self.log.log(e)
+        if self.yconf:
+            self.log.log("")
+            self.log.log("Warning : Some parts of the YAML configuration file have been ignored.")
+            self.log.log("Please check the ignored parts :")
+            self.log.log_error(self.yconf)
     
     def _init_sys_info(self):
         try:
             self.sys_info = SysInfo(self.yconf[lang.sysinfo], lang.sysinfo)
+            del self.yconf[lang.sysinfo]
         except KeyError as e:
             self.sys_info = Empty(section=lang.sysinfo)
 
@@ -277,6 +336,7 @@ class Switch():
         try:
             if type_is_valid(self.yconf[lang.adminpassword], [int, str], lang.adminpassword, "/"):
                     self.admin_password = self.yconf[lang.adminpassword]
+                    del self.yconf["mot de passe administrateur"]
         except KeyError:
             self.admin_password = Empty(section=lang.adminpassword)
 
@@ -284,6 +344,7 @@ class Switch():
         try:
             self.users = ListToCode([ User(user, lang.users) for user in self.yconf[lang.users]], lang.users)
             User.validate_users(self.users)
+            del self.yconf[lang.users]
         except SwitchConfigLogicError as e:
             print("Error while parsing the \"{}\" section".format(lang.users))
             print(e.message)
@@ -293,66 +354,77 @@ class Switch():
     def _init_vlan(self):
         try:
             self.vlan = VLANs(self.yconf["VLAN"], "VLAN")
+            del self.yconf["VLAN"]
         except KeyError:
             self.vlan = Empty(section="VLAN")
 
     def _init_administrative_ip_address(self):
         try:
             self.administrative_ip_address = ListToCode([ AdministrativeIPAddress(aipa, lang.admin_ip_address) for aipa in self.yconf[lang.admin_ip_address]], lang.admin_ip_address)
+            del self.yconf[lang.admin_ip_address]
         except KeyError:
             self.administrative_ip_address = ListToCode([self.empty], lang.admin_ip_address)
 
     def _init_routes(self):
         try:
             self.routes = ListToCode([ Route(route, lang.routes) for route in self.yconf[lang.routes]], lang.routes)
+            del self.yconf[lang.routes]
         except KeyError:
             self.routes = ListToCode([self.empty], lang.routes)
 
-    def _init_link_agg(self):
+    def _init_linkagg(self):
         try:
-            self.link_agg = ListToCode([ LinkAgg(linkagg, lang.linkagg) for linkagg in self.yconf[lang.linkagg]], lang.linkagg)
+            self.linkagg = ListToCode([ LinkAgg(linkagg, lang.linkagg) for linkagg in self.yconf[lang.linkagg]], lang.linkagg)
+            del self.yconf[lang.linkagg]
         except KeyError:
             self.linkagg = ListToCode([self.empty], lang.linkagg)
 
     def _init_dns(self):
         try:
             self.dns = ListToCode([ DNS(dns, "DNS") for dns in self.yconf["DNS"]], "DNS")
+            del self.yconf["DNS"]
         except KeyError:
             self.dns = ListToCode([self.empty], lang.dns)
 
     def _init_ntp(self):
         try:
             self.ntp = NTP(self.yconf["NTP"], "NTP")
+            del self.yconf["NTP"]
         except KeyError:
             self.ntp = Empty(section="NTP")
     
     def _init_poe(self):
         try:
             self.poe = PoE(self.yconf["PoE"], "PoE")
+            del self.yconf["PoE"]
         except KeyError:
             self.poe = Empty(section="PoE")
     
     def _init_aaa(self):
         try:
             self.aaa = AAA(self.yconf["AAA"], "AAA")
+            del self.yconf["AAA"]
         except KeyError:
             self.aaa = Empty(section="AAA")
     
     def _init_loop_detection(self):
         try:
             self.loopdetection = LoopDetection(self.yconf[lang.loop_detection], lang.loop_detection)
+            del self.yconf[lang.loop_detection]
         except KeyError:
             self.loopdetection = Empty(section=lang.loop_detection)
     
     def _init_stp(self):
         try:
             self.stp = STP(self.yconf["STP"], "STP")
+            del self.yconf["STP"]
         except KeyError:
             self.stp = Empty(section="STP")
     
     def _init_misc(self):
         try:
             self.misc = Misc(self.yconf[lang.misc], lang.misc)
+            del self.yconf[lang.misc]
         except KeyError:
             self.misc = Empty(section=lang.misc)
 
@@ -362,4 +434,7 @@ class Switch():
         aconfig += self.users.to_code()
         aconfig += self.dns.to_code()
         aconfig += self.administrative_ip_address.to_code()
+        aconfig += self.routes.to_code()
+        aconfig += self.linkagg.to_code()
+        aconfig += self.vlan.to_code()
         return aconfig
