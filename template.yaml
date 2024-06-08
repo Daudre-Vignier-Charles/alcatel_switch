@@ -1,0 +1,151 @@
+# yaml-language-server: $schema=https://json.schemastore.org/yamllint.json
+
+informations système :
+  nom : SW01
+  contact : C DAUDRE
+  localisation : BAT A.1
+
+# "text" : "text" sera le mdp
+# "5" : mdp aléatoire de 5 char
+mot de passe admin : true
+
+utilisateurs :
+  - nom : charles
+    # "text" : "text" sera le mdp
+    # "5" : mdp aléatoire de 5 char
+    mot de passe : 12
+    droit de modification : true
+  - nom : anotherone
+    mot de passe : 12
+    droit de modification : true
+
+adresses ip d'administration :
+  - nom : VLAN DATA
+    adresse : 192.168.2.6
+    masque : 255.255.255.0
+    vlan : 101
+    indice de l'interface : 2
+
+routes :
+  - ip : 0.0.0.0
+    cidr : 0
+    passerelle : 192.168.2.1
+    métrique : 1
+
+aggrégation de lien :
+  - nom : TO-SW02
+    identifiant : 2
+    nombre de ports : 2
+    clé : 10
+    activé : true
+    membres :
+      - 1/1/25
+      - 1/1/26
+  - nom : TO-SW02
+    identifiant : 3
+    nombre de ports : 2
+    clé : 10
+    activé : true
+    port membres :
+      - 1/1/27
+      - 1/1/28
+
+VLAN :
+  liste :
+    - nom : data
+      identifiant : 101
+      activé : true
+    - nom : VoIP_Mitel
+      identifiant : 105
+      activé : true
+  association port/vlan :
+    - port : 1/1/1-24
+      tagged : false
+      vlan : 101
+    - port : 1/1/1-24
+      tagged : true
+      vlan : 105
+  association aggrégat de lien/vlan :
+    - identifiant : 2
+      tagged : false
+      vlan : 101
+
+DNS :
+  - 192.168.1.210
+  - 192.168.1.215
+
+NTP :
+  activé : true
+  fuseau horaire  : CET
+  # hh:mm:ss
+  heure : null
+  # mm/dd/yyyy
+  date : null
+  serveurs :
+    - adresse : 194.2.0.58
+      minpoll : 5
+      burst : iburst
+      defaut : false
+    - adresse : 192.2.0.28
+      minpoll : 5
+      burst : iburst
+      defaut : true
+
+PoE :
+  ports avec détection de capacité :
+    - 1/1/1-24
+
+AAA :
+  # null -> désactivé
+  # local -> utilisateurs locaux
+  # [serveur] -> serveur TACACS+ ou LDAP ou RADIUS
+  authentification :
+    console : local
+    telnet : null
+    ssh : local
+    http : local
+    snmp : null
+    ftp : null
+  servers :
+    tacacsp :
+    ldap :
+      nom :
+      adresse :
+      adresse de backup :
+      utilisateur AD :
+      mot de passe AD :
+      zone de recherche :
+      essais : 3
+      timeout : 15
+      ssl : false
+      # 389 si clair, 636 si SSL, rien si par défaut, autre si cas particulier
+      port :
+    radius :
+
+détection de boucle :
+  activé : true
+  minuteur de transmission : 20
+  minuteur d'auto-recouvrement : 30
+
+STP :
+  par VLAN:
+    - 1
+    - 100
+    - 105
+
+divers :
+  limites du nombre de fichiers d'erreur : 2
+  alerte mémoire en pourcentage : 90
+  gestion des sessions :
+    CLI :
+      timeout : 15
+    FTP :
+      timeout : 15
+    HTTP :
+      timeout : 15
+
+commandes à exécuter au début :
+  - vlan 1 admin-state enable
+
+commandes à exécuter à la fin :
+  - aaa tacacs command-authorization disable
